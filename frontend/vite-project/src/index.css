@@ -1,0 +1,47 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	--brand-ink: #0f3f33;
+	--brand-sand: #f8f4ea;
+	--brand-gold: #ae7a2c;
+}
+
+body {
+	margin: 0;
+	font-family: "Manrope", sans-serif;
+	background: radial-gradient(circle at top right, #fff8e8 0%, #f7f2e5 30%, #f9faf9 100%);
+	color: #12322a;
+}
+
+h1,
+h2,
+h3,
+h4 {
+	font-family: "Cormorant Garamond", serif;
+}
+
+.menu-link {
+	border-bottom: 1px solid rgba(13, 59, 47, 0.1);
+	padding-bottom: 0.6rem;
+	font-weight: 600;
+}
+
+.gold-button {
+	border-radius: 9999px;
+	background: linear-gradient(135deg, #c39b53 0%, #9b6824 100%);
+	color: white;
+	padding: 0.5rem 1rem;
+	font-size: 0.875rem;
+	font-weight: 700;
+}
+
+.glass-card {
+	border: 1px solid #f2e4c6;
+	border-radius: 1rem;
+	background: rgba(255, 255, 255, 0.88);
+	box-shadow: 0 12px 30px rgba(17, 58, 44, 0.08);
+}
