@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import API from "../../services/api";
 import { useAuth } from "../../store/AuthContext";
 import { useShop } from "../../store/ShopContext";
@@ -96,21 +97,29 @@ const ChatAssistant = () => {
       </button>
 
       {open && (
-        <div className="fixed bottom-20 right-4 z-50 flex h-[60vh] w-[94vw] max-w-md flex-col rounded-2xl border bg-white shadow-lg text-slate-900">
-          <div className="rounded-t-2xl border-b px-4 py-3 bg-white">
-            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-900">Luwia AI Concierge</p>
-            <p className="mt-1 text-xs text-emerald-700">{user ? `Welcome back, ${user.name}` : "Guest — sign in for personalized picks"}</p>
+        <div className="fixed inset-0 z-50 flex min-h-screen w-full flex-col bg-white text-slate-900">
+          <div className="flex items-center justify-between border-b px-4 py-3 bg-white shadow-sm">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-emerald-900">Luwia AI Concierge</p>
+              <p className="mt-1 text-xs text-emerald-700">{user ? `Welcome back, ${user.name}` : "Guest — sign in for personalized picks"}</p>
+            </div>
+            <button
+              onClick={() => setOpen(false)}
+              className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+            >
+              Close
+            </button>
           </div>
 
-          <div className="space-y-3 border-b border-emerald-100/40 px-4 py-4">
-            <div className="rounded-3xl border border-emerald-100/30 bg-white p-3">
-              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-500">Seasonal inspiration</p>
+          <div className="sticky top-0 z-10 space-y-3 border-b border-emerald-100/40 bg-white px-4 py-4">
+            <div className="rounded-3xl border border-emerald-100/30 bg-emerald-50/80 p-3">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-600">Seasonal inspiration</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {seasonalPrompts.map((prompt) => (
                   <button
                     key={prompt}
                     onClick={() => sendMessage(prompt)}
-                    className="rounded-full border border-emerald-100/40 bg-emerald-50 px-3 py-1 text-[11px] text-emerald-900 transition hover:bg-emerald-100"
+                    className="rounded-full border border-emerald-100/40 bg-white px-3 py-1 text-[11px] text-emerald-900 transition hover:bg-emerald-100"
                   >
                     {prompt}
                   </button>
@@ -118,14 +127,14 @@ const ChatAssistant = () => {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-emerald-100/30 bg-white p-3">
-              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-500">App & random questions</p>
+            <div className="rounded-3xl border border-emerald-100/30 bg-emerald-50/80 p-3">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-emerald-600">App & random questions</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {appPrompts.map((prompt) => (
                   <button
                     key={prompt}
                     onClick={() => sendMessage(prompt)}
-                    className="rounded-full border border-emerald-100/40 bg-emerald-50 px-3 py-1 text-[11px] text-emerald-900 transition hover:bg-emerald-100"
+                    className="rounded-full border border-emerald-100/40 bg-white px-3 py-1 text-[11px] text-emerald-900 transition hover:bg-emerald-100"
                   >
                     {prompt}
                   </button>
@@ -134,7 +143,7 @@ const ChatAssistant = () => {
             </div>
           </div>
 
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-3 bg-white">
+          <div ref={scrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto p-3 bg-white">
             {messages.map((m, index) => (
               <div key={`${m.role}-${index}`} className={`flex items-start gap-3 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 {m.role === "assistant" ? (
