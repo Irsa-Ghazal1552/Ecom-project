@@ -9,6 +9,18 @@ const Groq = require("groq-sdk");
 
 const User = require("./models/User");
 const Product = require("./models/Product");
+const Setting = require("./models/Setting");
+const { generateMetaTags } = require("./utils/metaTagGenerator");
+const {
+  analyzeSeasonalTrends,
+  predictMonthlyTrends,
+  getCategoryTrendsByMonth,
+  detectInventoryIssues,
+  detectPriceAnomalies,
+  getSeasonalRecommendations,
+  getCurrentMonthKey,
+  months
+} = require("./utils/analyticsEngine");
 
 const app = express();
 const PORT = 5000;
@@ -21,9 +33,12 @@ if (groqClient) console.log("✅ Groq AI connected");
 else console.warn("⚠️  GROQ_API_KEY not set — chatbot running in keyword-only mode");
 
 const GROQ_SYSTEM_PROMPT = `You are Luwia AI, a smart shopping assistant for Luwia, a jewelry and accessories e-commerce store.
-Analyze the user message and respond with ONLY a valid JSON object — no extra text, no markdown.
+You are also a general knowledge AI that can answer questions about technology, web development, science, and other topics.
 
-Required JSON structure:
+For e-commerce queries, respond with a valid JSON object with the specified structure below.
+For general knowledge questions (not e-commerce related), provide a helpful conversational response in plain text (not JSON).
+
+E-commerce JSON structure (when intent is e-commerce related):
 {
   "intent": "<intent>",
   "params": {
@@ -38,20 +53,8 @@ Required JSON structure:
   "reply": "<reply>"
 }
 
-Intent values (pick exactly one):
-- product_search: user wants to find/browse products with any filter or natural language
-- trending: trending/popular/best sellers/hot items/top products
-- popular_searches: what people search, buy, what is popular
-- recommendations: personalized suggestions for the user
-- order_tracking: order status, where is my order, delivery/shipping status
-- cart_add: add a specific item to cart
-- cart_remove: remove a specific item from cart
-- cart_reminder: check cart contents, what is in my cart
-- coupon: coupon/discount/promo code apply or list
-- faq_shipping: shipping times, delivery info
-- faq_returns: returns, refunds, exchange policy
-- faq_payment: payment methods, checkout info
-- unknown: anything else
+Intent values (for e-commerce):
+- product_search, trending, popular_searches, recommendations, order_tracking, cart_add, cart_remove, cart_reminder, coupon, faq_shipping, faq_returns, faq_payment, general_knowledge
 
 Price extraction rules:
 - "under $X" / "below $X" / "less than $X" / "cheaper than $X" → maxPrice: X
@@ -61,7 +64,19 @@ Price extraction rules:
 Category extraction (only these values): rings, necklaces, earrings, bracelets, watches, shoes, bags
 Rating extraction: "rated 4+" / "rating above 4" / "4 stars" → rating: 4
 
-Reply rules (KEEP UNDER 2 SENTENCES):
+IMPORTANT ROUTING RULES:
+1. If the message is about Luwia store, products, cart, orders, shipping, returns, payment, or coupons → return JSON with appropriate e-commerce intent
+2. If the message is a general question about technology, web, science, history, math, or any other topic → respond in plain text with helpful information (DO NOT return JSON)
+3. For ambiguous messages, use context to determine if it's e-commerce or general knowledge
+
+General knowledge examples that should be answered in plain text:
+- "What is JavaScript?" → Answer directly about JavaScript
+- "How does the internet work?" → Explain in detail
+- "Tell me about web development" → Provide educational information
+- "What is React?" → Answer about React framework
+- "How to code?" → Provide coding guidance
+
+Reply rules for e-commerce (KEEP UNDER 2 SENTENCES):
 - product_search: "Let me find [description] for you!"
 - trending: "Here are our hottest items right now!"
 - popular_searches: "Here is what shoppers are loving!"
@@ -71,7 +86,8 @@ Reply rules (KEEP UNDER 2 SENTENCES):
 - faq_payment: "We accept all major cards. Sandbox checkout mode for this demo."
 - cart_add / cart_remove: brief confirmation
 - order_tracking: "Let me check your latest order!"
-- coupon: list available coupons if no code given, or confirm if code found`;
+- coupon: list available coupons if no code given, or confirm if code found
+- general_knowledge: [helpful response]`;
 
 const askGroq = async (userMessage) => {
   if (!groqClient) return null;
@@ -82,11 +98,18 @@ const askGroq = async (userMessage) => {
         { role: "system", content: GROQ_SYSTEM_PROMPT },
         { role: "user", content: userMessage }
       ],
-      response_format: { type: "json_object" },
-      temperature: 0.1,
-      max_tokens: 300
+      temperature: 0.3,
+      max_tokens: 500
     });
-    return JSON.parse(completion.choices[0].message.content);
+    const content = completion.choices[0].message.content;
+    
+    // Try to parse as JSON first
+    try {
+      return JSON.parse(content);
+    } catch {
+      // If JSON parsing fails, it's a general knowledge response
+      return { intent: "general_knowledge", reply: content, isPlainText: true };
+    }
   } catch (err) {
     console.error("Groq error:", err.message);
     return null;
@@ -159,7 +182,11 @@ const parseNaturalSearch = (text = "") => {
   const minMatch = q.match(/(?:above|over|more than|greater than|at least)\s*\$?\s*(\d+(?:\.\d+)?)/i);
   const ratingMatch = q.match(/(?:rating|rated|stars?)\s*(?:above|over|>=|at least)?\s*(\d(?:\.\d)?)/i);
 
-  const knownCategories = ["rings", "necklaces", "earrings", "bracelets", "watches", "shoes", "bags"];
+  const knownCategories = [
+    "rings", "necklaces", "earrings", "bracelets", "watches", "shoes", "bags",
+    "head wear", "neck wear", "hand wear", "ear wear", "foot wear",
+    "wedding", "corporate", "daily wear", "dailywear", "gifts", "gothic", "desi"
+  ];
   const category = knownCategories.find((cat) => q.includes(cat)) || "";
 
   return {
@@ -169,6 +196,51 @@ const parseNaturalSearch = (text = "") => {
     maxPrice: maxMatch ? Number(maxMatch[1]) : undefined,
     rating: ratingMatch ? Number(ratingMatch[1]) : undefined
   };
+};
+
+const categoryGroup = (category) => {
+  const normalized = category.toString().toLowerCase().trim();
+  if (!normalized) return null;
+
+  const groups = {
+    "hand wear": ["hand wear", "rings", "bracelets", "watches", "bags"],
+    "neck wear": ["neck wear", "necklaces"],
+    "ear wear": ["ear wear", "earrings"],
+    "foot wear": ["foot wear", "shoes"],
+    "head wear": ["head wear", "tiaras", "headbands"]
+  };
+
+  return groups[normalized] || [category];
+};
+
+const getCurrentStoreSeason = async () => {
+  try {
+    const setting = await Setting.findOne({ key: "featuredCollection" });
+    return setting?.value || null;
+  } catch {
+    return null;
+  }
+};
+
+const upsertFeaturedCollection = async (theme) => {
+  const labelMap = {
+    wedding: "Wedding & Bridal",
+    corporate: "Corporate Signature",
+    dailywear: "Daily Luxe",
+    gifts: "Gift Edit",
+    gothic: "Gothic Glam",
+    desi: "Desi Heritage"
+  };
+  const value = {
+    theme,
+    label: labelMap[theme] || theme.charAt(0).toUpperCase() + theme.slice(1),
+    updatedAt: new Date()
+  };
+  return Setting.findOneAndUpdate(
+    { key: "featuredCollection" },
+    { value },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
 };
 
 const applyCoupon = (code = "", subtotal = 0) => {
@@ -286,41 +358,39 @@ app.post("/login", loginHandler);
 // ================= PRODUCTS =================
 app.get("/discover", async (req, res) => {
   try {
-    const { q = "", category = "", brand = "", minPrice, maxPrice, rating } = req.query;
+    const { q = "", category = "", brand = "", minPrice, maxPrice, rating, theme = "" } = req.query;
     const parsed = parseNaturalSearch(q);
 
-    const effectiveCategory = category || parsed.category;
+    const effectiveCategory = category || parsed.category || "";
     const effectiveMin = minPrice !== undefined ? Number(minPrice) : parsed.minPrice;
     const effectiveMax = maxPrice !== undefined ? Number(maxPrice) : parsed.maxPrice;
     const effectiveRating = rating !== undefined ? Number(rating) : parsed.rating;
 
-    const query = {
-      ...(effectiveCategory ? { category: new RegExp(effectiveCategory, "i") } : {}),
-      ...(brand ? { brand: new RegExp(brand, "i") } : {}),
-      ...(effectiveRating ? { rating: { $gte: effectiveRating } } : {}),
-      ...((effectiveMin !== undefined || effectiveMax !== undefined)
-        ? {
-            price: {
-              ...(effectiveMin !== undefined ? { $gte: effectiveMin } : {}),
-              ...(effectiveMax !== undefined ? { $lte: effectiveMax } : {})
-            }
-          }
-        : {}),
-      ...(q
-        ? {
-            $or: [
-              { name: { $regex: q, $options: "i" } },
-              { description: { $regex: q, $options: "i" } },
-              { keywords: { $elemMatch: { $regex: q, $options: "i" } } },
-              { brand: { $regex: q, $options: "i" } }
-            ]
-          }
-        : {})
-    };
+    const query = {};
+    if (effectiveCategory) query.category = new RegExp(effectiveCategory, "i");
+    if (brand) query.brand = new RegExp(brand, "i");
+    if (effectiveRating) query.rating = { $gte: effectiveRating };
+    if (effectiveMin !== undefined || effectiveMax !== undefined) {
+      query.price = {};
+      if (effectiveMin !== undefined) query.price.$gte = effectiveMin;
+      if (effectiveMax !== undefined) query.price.$lte = effectiveMax;
+    }
+
+    if (q) {
+      query.$or = [
+        { name: { $regex: q, $options: "i" } },
+        { description: { $regex: q, $options: "i" } },
+        { keywords: { $elemMatch: { $regex: q, $options: "i" } } },
+        { brand: { $regex: q, $options: "i" } }
+      ];
+    }
+
+    if (theme) query.themes = theme;
 
     const products = await Product.find(query).limit(30).sort({ soldCount: -1, rating: -1 });
-    res.json({ filters: { category: effectiveCategory, brand, minPrice: effectiveMin, maxPrice: effectiveMax, rating: effectiveRating }, products });
-  } catch {
+    res.json({ filters: { category: effectiveCategory, brand, minPrice: effectiveMin, maxPrice: effectiveMax, rating: effectiveRating, theme }, products });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Discovery failed" });
   }
 });
@@ -351,23 +421,28 @@ app.get("/products/suggest", async (req, res) => {
 
 app.get("/products", async (req, res) => {
   try {
-    const { search = "", category = "" } = req.query;
-    const query = {
-      ...(category ? { category: new RegExp(category, "i") } : {}),
-      ...(search
-        ? {
-            $or: [
-              { name: { $regex: search, $options: "i" } },
-              { description: { $regex: search, $options: "i" } },
-              { keywords: { $elemMatch: { $regex: search, $options: "i" } } }
-            ]
-          }
-        : {})
-    };
+    const { category = "", search = "", theme = "" } = req.query;
+    let query = {};
+
+    if (category) {
+      const groups = categoryGroup(category) || [category];
+      query.category = { $in: groups.map((c) => new RegExp(c, "i")) };
+    }
+
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+        { keywords: { $elemMatch: { $regex: search, $options: "i" } } }
+      ];
+    }
+
+    if (theme) query.themes = theme;
 
     const products = await Product.find(query).sort({ _id: -1 });
     res.json(products);
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: "Failed to fetch products" });
   }
 });
@@ -454,7 +529,20 @@ app.get("/products/:id", async (req, res) => {
 
 app.post("/products", auth, adminOnly, async (req, res) => {
   try {
-    const product = await Product.create(req.body);
+    const productData = req.body;
+    
+    // Auto-generate meta tags if not provided
+    if (!productData.seoTitle || !productData.seoDescription) {
+      const autoMeta = generateMetaTags(productData);
+      productData.seoTitle = productData.seoTitle || autoMeta.seoTitle;
+      productData.seoDescription = productData.seoDescription || autoMeta.seoDescription;
+      productData.keywords = productData.keywords?.length ? productData.keywords : autoMeta.keywords;
+      productData.seoSlug = productData.seoSlug || autoMeta.seoSlug;
+      productData.canonicalUrl = productData.canonicalUrl || autoMeta.canonicalUrl;
+      productData.autoGeneratedMetaTags = true;
+    }
+    
+    const product = await Product.create(productData);
     res.status(201).json(product);
   } catch (error) {
     res.status(400).json({ message: "Failed to create product" });
@@ -463,8 +551,54 @@ app.post("/products", auth, adminOnly, async (req, res) => {
 
 app.put("/products/:id", auth, adminOnly, async (req, res) => {
   try {
-    const updated = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ message: "Product not found" });
+    const updateData = req.body;
+    const product = await Product.findById(req.params.id);
+    
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // Track price changes
+    if (updateData.price && updateData.price !== product.price) {
+      const percentChange = Math.abs(((updateData.price - product.price) / product.price) * 100);
+      
+      // Flag if exponential change (>30%)
+      if (percentChange > 30) {
+        return res.status(400).json({
+          message: `Price change too high (${percentChange.toFixed(2)}%). Please review.`,
+          currentPrice: product.price,
+          newPrice: updateData.price,
+          percentChange
+        });
+      }
+
+      // Store price history
+      updateData.previousPrice = product.price;
+      product.priceHistory.push({
+        price: product.price,
+        changedAt: new Date(),
+        percentChange
+      });
+      updateData.priceChangedAt = new Date();
+    }
+
+    // Auto-update seasonal data based on category if selling
+    if (updateData.soldCount && updateData.soldCount > product.soldCount) {
+      const currentMonth = getCurrentMonthKey();
+      const soldDiff = updateData.soldCount - product.soldCount;
+      if (!updateData.seasonalData) updateData.seasonalData = product.seasonalData;
+      updateData.seasonalData[currentMonth] = (product.seasonalData[currentMonth] || 0) + soldDiff;
+    }
+
+    // Regenerate meta tags if auto-generated or not provided
+    if (product.autoGeneratedMetaTags || !updateData.seoTitle) {
+      const autoMeta = generateMetaTags(updateData);
+      updateData.seoTitle = updateData.seoTitle || autoMeta.seoTitle;
+      updateData.seoDescription = updateData.seoDescription || autoMeta.seoDescription;
+      updateData.keywords = updateData.keywords?.length ? updateData.keywords : autoMeta.keywords;
+      updateData.seoSlug = updateData.seoSlug || autoMeta.seoSlug;
+      updateData.autoGeneratedMetaTags = true;
+    }
+
+    const updated = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true });
     res.json(updated);
   } catch (error) {
     res.status(400).json({ message: "Failed to update product" });
@@ -477,6 +611,223 @@ app.delete("/products/:id", auth, adminOnly, async (req, res) => {
     res.json({ message: "Deleted" });
   } catch (error) {
     res.status(400).json({ message: "Failed to delete product" });
+  }
+});
+
+// ================= INVENTORY MANAGEMENT =================
+app.get("/inventory/alerts", auth, adminOnly, async (req, res) => {
+  try {
+    const products = await Product.find();
+    const alerts = detectInventoryIssues(products);
+    res.json(alerts);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch inventory alerts" });
+  }
+});
+
+app.get("/inventory/stock/:productId", async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.productId).select("name stock minStockLevel category");
+    if (!product) return res.status(404).json({ message: "Product not found" });
+    res.json({
+      name: product.name,
+      category: product.category,
+      stock: product.stock,
+      minLevel: product.minStockLevel,
+      status: product.stock === 0 ? "out_of_stock" : product.stock < product.minStockLevel ? "low_stock" : "in_stock"
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch stock" });
+  }
+});
+
+app.put("/inventory/restock/:productId", auth, adminOnly, async (req, res) => {
+  try {
+    const { quantity } = req.body;
+    if (!quantity || quantity < 0) {
+      return res.status(400).json({ message: "Invalid quantity" });
+    }
+    const product = await Product.findByIdAndUpdate(
+      req.params.productId,
+      { $inc: { stock: quantity }, lastRestockDate: new Date() },
+      { new: true }
+    );
+    res.json({ message: `Restocked ${quantity} units`, product });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to restock" });
+  }
+});
+
+// ================= PRICE MONITORING =================
+app.get("/pricing/anomalies", auth, adminOnly, async (req, res) => {
+  try {
+    const products = await Product.find({ priceHistory: { $exists: true, $ne: [] } });
+    const anomalies = detectPriceAnomalies(products);
+    res.json(anomalies);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch price anomalies" });
+  }
+});
+
+app.get("/pricing/history/:productId", auth, adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.productId).select("name price previousPrice priceHistory");
+    if (!product) return res.status(404).json({ message: "Product not found" });
+    res.json({
+      name: product.name,
+      currentPrice: product.price,
+      previousPrice: product.previousPrice,
+      history: product.priceHistory
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch price history" });
+  }
+});
+
+// ================= SEASONAL ANALYTICS & PREDICTIONS =================
+app.get("/analytics/trends", async (req, res) => {
+  try {
+    const products = await Product.find();
+    const predictions = predictMonthlyTrends(products);
+    res.json({
+      currentMonth: getCurrentMonthKey(),
+      predictions,
+      summary: `${predictions.length} products predicted to sell this month`
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch trends" });
+  }
+});
+
+app.get("/analytics/category-trends", async (req, res) => {
+  try {
+    const month = req.query.month || null;
+    const products = await Product.find();
+    const trends = getCategoryTrendsByMonth(products, month);
+    res.json({ trends });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch category trends" });
+  }
+});
+
+app.get("/analytics/seasonal-analysis", async (req, res) => {
+  try {
+    const products = await Product.find();
+    const analysis = analyzeSeasonalTrends(products);
+    res.json(analysis);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch seasonal analysis" });
+  }
+});
+
+app.get("/analytics/recommendations/seasonal", async (req, res) => {
+  try {
+    const products = await Product.find().sort({ rating: -1 });
+    const featured = await getCurrentStoreSeason();
+    let recommendations = getSeasonalRecommendations(products).slice(0, 12);
+    if (featured?.theme) {
+      const themeFiltered = products
+        .filter((p) => Array.isArray(p.themes) && p.themes.includes(featured.theme))
+        .sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      if (themeFiltered.length) {
+        recommendations = themeFiltered.slice(0, 12);
+      }
+    }
+    res.json({
+      season: featured?.theme || (new Date().getMonth() >= 11 || new Date().getMonth() <= 1 ? "winter" : 
+               new Date().getMonth() >= 2 && new Date().getMonth() <= 4 ? "spring" :
+               new Date().getMonth() >= 5 && new Date().getMonth() <= 7 ? "summer" : "fall"),
+      label: featured?.label || null,
+      recommendations
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch seasonal recommendations" });
+  }
+});
+
+app.get("/settings/featured-collection", auth, adminOnly, async (req, res) => {
+  try {
+    const setting = await getCurrentStoreSeason();
+    res.json(setting || { theme: "dailywear", label: "Daily Luxe" });
+  } catch {
+    res.status(500).json({ message: "Failed to read featured collection" });
+  }
+});
+
+app.put("/settings/featured-collection", auth, adminOnly, async (req, res) => {
+  try {
+    const { theme } = req.body;
+    if (!theme) return res.status(400).json({ message: "Theme is required" });
+    const updated = await upsertFeaturedCollection(theme);
+    res.json(updated.value);
+  } catch {
+    res.status(500).json({ message: "Failed to update featured collection" });
+  }
+});
+
+app.get("/analytics/dashboard", auth, adminOnly, async (req, res) => {
+  try {
+    const products = await Product.find();
+    const totalProducts = products.length;
+    const totalSales = products.reduce((sum, p) => sum + p.soldCount, 0);
+    const inventory = detectInventoryIssues(products);
+    const priceAnomalies = detectPriceAnomalies(products);
+    const monthlyTrends = predictMonthlyTrends(products).slice(0, 5);
+    const categoryTrends = getCategoryTrendsByMonth(products).slice(0, 5);
+
+    res.json({
+      overview: {
+        totalProducts,
+        totalSales,
+        lowStockItems: inventory.lowStock.length,
+        outOfStockItems: inventory.outOfStock.length,
+        priceAnomalies: priceAnomalies.length
+      },
+      inventory,
+      priceAnomalies,
+      monthlyTrends,
+      categoryTrends
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch dashboard" });
+  }
+});
+
+// ================= AUTO META TAGS GENERATION =================
+app.post("/admin/regenerate-meta-tags", auth, adminOnly, async (req, res) => {
+  try {
+    const { productId, forAll } = req.body;
+
+    if (forAll) {
+      // Regenerate for all products
+      const products = await Product.find();
+      await Promise.all(
+        products.map((product) => {
+          const autoMeta = generateMetaTags(product);
+          return Product.findByIdAndUpdate(product._id, {
+            ...autoMeta,
+            autoGeneratedMetaTags: true
+          });
+        })
+      );
+      return res.json({ message: `Meta tags regenerated for ${products.length} products` });
+    }
+
+    if (productId) {
+      const product = await Product.findById(productId);
+      if (!product) return res.status(404).json({ message: "Product not found" });
+
+      const autoMeta = generateMetaTags(product);
+      const updated = await Product.findByIdAndUpdate(productId, {
+        ...autoMeta,
+        autoGeneratedMetaTags: true
+      }, { new: true });
+      return res.json({ message: "Meta tags regenerated", product: updated });
+    }
+
+    res.status(400).json({ message: "Provide productId or forAll parameter" });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to regenerate meta tags" });
   }
 });
 
@@ -623,8 +974,15 @@ app.post("/checkout", auth, async (req, res) => {
       placedAt: new Date()
     });
 
+    // Update product soldCount and seasonal data
+    const currentMonth = getCurrentMonthKey();
     await Promise.all(
-      items.map((item) => Product.findByIdAndUpdate(item.product, { $inc: { soldCount: item.quantity } }))
+      items.map((item) =>
+        Product.findByIdAndUpdate(item.product, {
+          $inc: { soldCount: item.quantity, stock: -item.quantity },
+          $inc: { [`seasonalData.${currentMonth}`]: item.quantity }
+        })
+      )
     );
 
     user.cart = [];
@@ -637,6 +995,7 @@ app.post("/checkout", auth, async (req, res) => {
       subtotal
     });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: "Checkout failed" });
   }
 });
@@ -708,6 +1067,149 @@ app.put("/orders/:userId/:orderId/status", auth, adminOnly, async (req, res) => 
 });
 
 // ================= CHATBOT / AI AGENT (Groq-powered) =================
+const localChatResponses = [
+  {
+    triggers: [
+      /what is this app/i,
+      /what is luwia/i,
+      /tell me about the app/i,
+      /what does luwia do/i,
+      /what is luwia ai/i
+    ],
+    intent: "general_knowledge",
+    reply: "Luwia is a premium jewelry shopping demo with an AI assistant, curated seasonal picks, product discovery, and elegant collections for rings, necklaces, earrings, bracelets, watches, bags, and shoes."
+  },
+  {
+    triggers: [
+      /how do i sign up/i,
+      /create an account/i,
+      /register/i
+    ],
+    intent: "general_knowledge",
+    reply: "Use the signup page, enter your name, email and password, then log in to save favorites, get recommendations, and add items to your cart."
+  },
+  {
+    triggers: [
+      /how do i log in/i,
+      /login/i,
+      /sign in/i
+    ],
+    intent: "general_knowledge",
+    reply: "Go to the Login page and enter the email and password you registered with. Once signed in, you can use the cart, wishlist, and personalized recommendations."
+  },
+  {
+    triggers: [
+      /apply coupon/i,
+      /use coupon/i,
+      /coupon/i,
+      /discount code/i,
+      /promo code/i
+    ],
+    intent: "coupon",
+    reply: "Available coupons: SAVE10 (10% off), NEWUSER15 (15% off), FLAT50 ($50 off). Ask me to apply one and I can tell you the savings."
+  },
+  {
+    triggers: [
+      /return policy/i,
+      /returns/i,
+      /refund/i,
+      /can i return/i
+    ],
+    intent: "faq_returns",
+    reply: "Returns are accepted within 14 days for unused items in original packaging. Refunds process in 5-7 business days."
+  },
+  {
+    triggers: [
+      /shipping policy/i,
+      /shipping/i,
+      /delivery/i,
+      /how long does it take/i,
+      /ship internationally/i
+    ],
+    intent: "faq_shipping",
+    reply: "Standard shipping takes 3-7 business days. Express shipping is 1-3 days. Free shipping is available on orders over $150."
+  },
+  {
+    triggers: [
+      /gift wrap/i,
+      /gift wrapping/i,
+      /gift package/i,
+      /gift box/i
+    ],
+    intent: "general_knowledge",
+    reply: "Yes — we offer luxury gift wrapping for special occasions. In the app demo, add your favorites to the cart and imagine them arriving in elegant packaging."
+  },
+  {
+    triggers: [
+      /track my order/i,
+      /where is my order/i,
+      /order status/i,
+      /track order/i
+    ],
+    intent: "order_tracking",
+    reply: "I can check your order status when you are logged in. Ask me to track your order and I will show the latest shipment stage."
+  },
+  {
+    triggers: [
+      /wishlist/i,
+      /save for later/i,
+      /favorites/i,
+      /favorite items/i
+    ],
+    intent: "general_knowledge",
+    reply: "Use the wishlist to save products you love. After login, click the wishlist button on any product to keep it for later."
+  },
+  {
+    triggers: [
+      /seasonal/i,
+      /summer/i,
+      /winter/i,
+      /spring/i,
+      /fall/i,
+      /autumn/i,
+      /holiday/i,
+      /valentine/i,
+      /wedding/i
+    ],
+    intent: "seasonal_recommendations",
+    reply: "Let me find the best seasonal jewelry and accessories for you. Here are curated picks for this season."
+  },
+  {
+    triggers: [
+      /what is react/i,
+      /what is javascript/i,
+      /how does ai work/i,
+      /how does the internet work/i,
+      /what is web development/i
+    ],
+    intent: "general_knowledge",
+    reply: "I can answer general tech questions as well. Just ask me about React, JavaScript, AI, or anything related to web development."
+  },
+  {
+    triggers: [
+      /random question/i,
+      /tell me something/i,
+      /fun fact/i,
+      /interesting fact/i
+    ],
+    intent: "general_knowledge",
+    reply: "Here is a fun fact: Jewelry trends often reflect the season — warm golds and sunset tones shine in autumn, while pearls and icy gemstones glow in winter."
+  }
+];
+
+const findLocalResponse = (text) => {
+  const normalized = text.toString();
+  for (const item of localChatResponses) {
+    if (item.triggers.some((pattern) => typeof pattern === "string" ? normalized.toLowerCase().includes(pattern.toLowerCase()) : pattern.test(normalized))) {
+      return item;
+    }
+  }
+  return null;
+};
+
+const seasonalTriggerWords = ["season", "summer", "winter", "spring", "fall", "autumn", "holiday", "valentine", "wedding", "springtime", "summertime", "festive"];
+const isSeasonalQuestion = (text) => seasonalTriggerWords.some((word) => text.toLowerCase().includes(word));
+
 app.post("/assistant/chat", optionalAuth, async (req, res) => {
   try {
     const message = (req.body.message || "").toString().trim();
@@ -718,11 +1220,33 @@ app.post("/assistant/chat", optionalAuth, async (req, res) => {
     // ── Step 1: Groq intent classification ──────────────────────────
     const groqResult = await askGroq(message);
 
+    const localResponse = findLocalResponse(message);
+    const seasonalQuery = isSeasonalQuestion(message);
+
     // ── Step 2: Decide intent (Groq first, keyword fallback if unavailable) ──
     let intent = groqResult?.intent || "unknown";
     const params = groqResult?.params || {};
     let reply = groqResult?.reply || "";
     let payload = null;
+
+    if ((intent === "unknown" || !groqResult) && localResponse) {
+      return res.json({
+        intent: localResponse.intent || "general_knowledge",
+        reply: localResponse.reply,
+        payload: localResponse.payload || null
+      });
+    }
+
+    if (!groqResult && seasonalQuery) intent = "seasonal_recommendations";
+
+    // Handle plain text general knowledge responses
+    if (groqResult?.isPlainText) {
+      return res.json({
+        intent: "general_knowledge",
+        reply: groqResult.reply,
+        payload: null
+      });
+    }
 
     if (!groqResult) {
       if (lower.includes("shipping") || lower.includes("delivery")) intent = "faq_shipping";
@@ -736,7 +1260,7 @@ app.post("/assistant/chat", optionalAuth, async (req, res) => {
       else if (lower.includes("add") && lower.includes("cart")) intent = "cart_add";
       else if (lower.includes("remove") && lower.includes("cart")) intent = "cart_remove";
       else if (lower.includes("cart")) intent = "cart_reminder";
-      else intent = "product_search";
+      else intent = "general_knowledge";
     }
 
     // ── Step 3: Execute intent against database ──────────────────────
@@ -770,7 +1294,6 @@ app.post("/assistant/chat", optionalAuth, async (req, res) => {
 
         let products = await Product.find(query).sort({ rating: -1, soldCount: -1 }).limit(8);
 
-        // Relax price filter if no results but category was set
         if (!products.length && hasFilters && cat) {
           products = await Product.find({ category: new RegExp(cat, "i") }).sort({ rating: -1 }).limit(6);
           if (products.length && !reply) reply = `No exact price match, but here are our top ${cat}!`;
@@ -805,6 +1328,15 @@ app.post("/assistant/chat", optionalAuth, async (req, res) => {
           .join(" | ");
         if (!reply) reply = `People are shopping for: ${summary || "rings, necklaces, earrings and more!"}`;
         payload = { topByCategory };
+        break;
+      }
+
+      case "seasonal_recommendations": {
+        const allProducts = await Product.find();
+        const seasonal = getSeasonalRecommendations(allProducts);
+        const products = seasonal.recommendations || [];
+        if (!reply) reply = seasonal.summary || `Discover our curated ${seasonal.season} collection. Here are the best seasonal picks!`;
+        payload = { products: products.slice(0, 8), season: seasonal.season, summary: seasonal.summary };
         break;
       }
 
@@ -938,6 +1470,15 @@ app.post("/assistant/chat", optionalAuth, async (req, res) => {
         if (!reply) reply = "We accept all major credit and debit cards. This project uses sandbox checkout mode for demo purposes.";
         break;
 
+      case "general_knowledge": {
+        // If Groq returned a general knowledge response, use it
+        if (reply) break;
+        
+        // Fallback for general knowledge questions
+        reply = "I can help with information about web development, technology, and general questions! What would you like to know?";
+        break;
+      }
+
       default: {
         // Final fallback: broad keyword/NLP product search
         const parsed = parseNaturalSearch(message);
@@ -959,7 +1500,7 @@ app.post("/assistant/chat", optionalAuth, async (req, res) => {
           reply = reply || "I found some products that might interest you!";
           payload = { products };
         } else {
-          reply = reply || `I can help with: product search ("show me rings under $200"), order tracking, cart, coupons (SAVE10, FLAT50, NEWUSER15), and store info!`;
+          reply = reply || `I can help with: product search ("show me rings under $200"), order tracking, cart, coupons, and also answer general questions about tech and web!`;
         }
       }
     }

@@ -51,6 +51,35 @@ const Dashboard = () => {
     loadData();
   }, []);
 
+  // Featured collection control (admin)
+  const [featured, setFeatured] = useState(null);
+  const [updatingFeatured, setUpdatingFeatured] = useState(false);
+
+  useEffect(() => {
+    const fetchFeatured = async () => {
+      try {
+        const res = await API.get("/settings/featured-collection");
+        setFeatured(res.data);
+      } catch {
+        setFeatured(null);
+      }
+    };
+    fetchFeatured();
+  }, []);
+
+  const updateFeatured = async (theme) => {
+    setUpdatingFeatured(true);
+    try {
+      const res = await API.put("/settings/featured-collection", { theme });
+      setFeatured(res.data);
+      await loadData();
+    } catch {
+      // ignore
+    } finally {
+      setUpdatingFeatured(false);
+    }
+  };
+
   const submitProduct = async (e) => {
     e.preventDefault();
     const payload = {
@@ -107,6 +136,27 @@ const Dashboard = () => {
           <div className="glass-card p-4"><p className="text-xs">Users</p><p className="text-3xl">{users.length}</p></div>
           <div className="glass-card p-4"><p className="text-xs">Orders</p><p className="text-3xl">{stats.ordersCount}</p></div>
           <div className="glass-card p-4"><p className="text-xs">Total Sales</p><p className="text-3xl">${stats.totalSales.toFixed(2)}</p></div>
+        </div>
+
+        <div className="mb-6">
+          <div className="glass-card p-4">
+            <h3 className="text-lg font-semibold text-emerald-900 mb-2">Featured Collection</h3>
+            <p className="text-sm text-slate-700 mb-3">Current: {featured?.label || "(none)"}</p>
+            <div className="flex gap-2">
+              {[
+                "wedding",
+                "corporate",
+                "dailywear",
+                "gifts",
+                "gothic",
+                "desi"
+              ].map((t) => (
+                <button key={t} className="rounded-full border px-3 py-1 text-sm text-emerald-900" onClick={() => updateFeatured(t)} disabled={updatingFeatured}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">

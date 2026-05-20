@@ -5,13 +5,14 @@ import { useEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useShop } from "../store/ShopContext";
 import { useAuth } from "../store/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import API from "../services/api";
 
 const emptyForm = {
   name: "", price: "", category: "", brand: "Luwia", rating: "4.2",
   description: "", image: "", seoTitle: "", seoDescription: "",
-  keywords: "", seoSlug: "", metaRobots: "index,follow", canonicalUrl: ""
+  keywords: "", seoSlug: "", metaRobots: "index,follow", canonicalUrl: "",
+  themes: ""
 };
 
 const Products = () => {
@@ -39,9 +40,73 @@ const Products = () => {
   const navigate = useNavigate();
   const { products, addToCart, addToWishlist, loadProducts } = useShop();
 
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const queryCategory = query.get("category") || "";
+  const queryTheme = query.get("theme") || "";
+
   useEffect(() => {
     setActiveProducts(products);
   }, [products]);
+
+  // Apply category from query param on initial load or when products change
+  useEffect(() => {
+    // If theme query param present, request themed products from server
+    if (queryTheme) {
+      setFilters((f) => ({ ...f, category: "" }));
+      loadProducts({ theme: queryTheme.toLowerCase() });
+      return;
+    }
+
+    if (queryCategory) {
+      setFilters((f) => ({ ...f, category: queryCategory }));
+      loadProducts({ category: queryCategory });
+      return;
+    }
+
+    // if no query category/theme and no discovery/search in progress, reset to full list
+    if (!search.trim() && !filters.brand && !filters.minPrice && !filters.maxPrice && !filters.rating) {
+      setActiveProducts(products);
+    }
+  }, [queryCategory, queryTheme, products]);
+
+  const noFiltersApplied = !search.trim() && !filters.category && !filters.brand && !filters.minPrice && !filters.maxPrice && !filters.rating;
+  const isShowingGrouped = !queryCategory && noFiltersApplied && products.length > 0;
+
+  const grouped = products.reduce((acc, p) => {
+    const key = p.category || "Other";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(p);
+    return acc;
+  }, {});
+
+  const renderCard = (p) => (
+    <article key={p._id} className="glass-card p-4">
+      {p.image ? (
+        <img src={p.image} alt={p.name} className="mb-3 h-48 w-full rounded object-cover" />
+      ) : (
+        <div className="mb-3 h-48 rounded bg-emerald-50" />
+      )}
+      <h3 className="text-xl text-emerald-950">{p.name}</h3>
+      <p className="mt-1 text-sm text-emerald-900/80">{p.description}</p>
+      <p className="mt-1 text-xs text-emerald-800">{p.brand || "Luwia"} | Rating: {p.rating || 4}</p>
+      <p className="mt-2 font-bold text-amber-800">${p.price}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {isAdmin ? (
+          <>
+            <button className="gold-button text-sm" onClick={() => openEdit(p)}>Edit</button>
+            <button className="rounded-full border border-red-400 px-3 py-1 text-sm text-red-700 hover:bg-red-50" onClick={() => deleteProduct(p._id)}>Delete</button>
+            <button className="rounded-full border border-emerald-900 px-3 py-1 text-sm text-emerald-900" onClick={() => { addToCart(p._id); }}>Add to Cart</button>
+          </>
+        ) : (
+          <>
+            <button className="gold-button" onClick={() => { if (!user) return navigate("/login"); addToCart(p._id); }}>Add to Cart</button>
+            <button className="rounded-full border border-emerald-900 px-3 text-sm text-emerald-900" onClick={() => { if (!user) return navigate("/login"); addToWishlist(p._id); }}>Wishlist</button>
+          </>
+        )}
+      </div>
+    </article>
+  );
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -87,7 +152,8 @@ const Products = () => {
       description: p.description || "", image: p.image || "",
       seoTitle: p.seoTitle || "", seoDescription: p.seoDescription || "",
       keywords: (p.keywords || []).join(", "), seoSlug: p.seoSlug || "",
-      metaRobots: p.metaRobots || "index,follow", canonicalUrl: p.canonicalUrl || ""
+      metaRobots: p.metaRobots || "index,follow", canonicalUrl: p.canonicalUrl || "",
+      themes: (p.themes || []).join(", ")
     });
     setAdminStatus("");
     setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -105,7 +171,8 @@ const Products = () => {
       ...adminForm,
       price: Number(adminForm.price),
       rating: Number(adminForm.rating || 4),
-      keywords: adminForm.keywords.split(",").map((k) => k.trim()).filter(Boolean)
+      keywords: adminForm.keywords.split(",").map((k) => k.trim()).filter(Boolean),
+      themes: adminForm.themes ? adminForm.themes.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean) : []
     };
     try {
       if (editingId) {
@@ -184,6 +251,7 @@ const Products = () => {
               <input className="w-full rounded border p-2" placeholder="Brand" value={adminForm.brand} onChange={(e) => setAdminForm((f) => ({ ...f, brand: e.target.value }))} />
               <input className="w-full rounded border p-2" placeholder="Rating (0-5)" type="number" min="0" max="5" step="0.1" value={adminForm.rating} onChange={(e) => setAdminForm((f) => ({ ...f, rating: e.target.value }))} />
               <input className="w-full rounded border p-2" placeholder="Image URL" value={adminForm.image} onChange={(e) => setAdminForm((f) => ({ ...f, image: e.target.value }))} />
+              <input className="w-full rounded border p-2" placeholder="Themes (comma-separated)" value={adminForm.themes || ""} onChange={(e) => setAdminForm((f) => ({ ...f, themes: e.target.value }))} />
               <textarea className="col-span-full w-full rounded border p-2" placeholder="Description" value={adminForm.description} onChange={(e) => setAdminForm((f) => ({ ...f, description: e.target.value }))} />
 
               <p className="col-span-full text-sm font-semibold text-emerald-900">SEO fields (optional)</p>
@@ -288,69 +356,27 @@ const Products = () => {
           </div>
         )}
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {activeProducts.map((p) => (
-            <article key={p._id} className="glass-card p-4">
-              {p.image ? (
-                <img src={p.image} alt={p.name} className="mb-3 h-48 w-full rounded object-cover" />
-              ) : (
-                <div className="mb-3 h-48 rounded bg-emerald-50" />
-              )}
-              <h3 className="text-xl text-emerald-950">{p.name}</h3>
-              <p className="mt-1 text-sm text-emerald-900/80">{p.description}</p>
-              <p className="mt-1 text-xs text-emerald-800">{p.brand || "Luwia"} | Rating: {p.rating || 4}</p>
-              <p className="mt-2 font-bold text-amber-800">${p.price}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {isAdmin ? (
-                  <>
-                    <button
-                      className="gold-button text-sm"
-                      onClick={() => openEdit(p)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="rounded-full border border-red-400 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-                      onClick={() => deleteProduct(p._id)}
-                    >
-                      Delete
-                    </button>
-                    <button
-                      className="rounded-full border border-emerald-900 px-3 py-1 text-sm text-emerald-900"
-                      onClick={() => { addToCart(p._id); }}
-                    >
-                      Add to Cart
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      className="gold-button"
-                      onClick={() => {
-                        if (!user) return navigate("/login");
-                        addToCart(p._id);
-                      }}
-                    >
-                      Add to Cart
-                    </button>
-                    <button
-                      className="rounded-full border border-emerald-900 px-3 text-sm text-emerald-900"
-                      onClick={() => {
-                        if (!user) return navigate("/login");
-                        addToWishlist(p._id);
-                      }}
-                    >
-                      Wishlist
-                    </button>
-                  </>
-                )}
+        {isShowingGrouped ? (
+          Object.keys(grouped).sort().map((cat) => (
+            <section key={cat} className="mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-2xl font-bold text-emerald-950">{cat} <span className="text-sm text-amber-800 ml-2">({grouped[cat].length})</span></h2>
+                <Link to={`/products?category=${encodeURIComponent(cat)}`} className="text-sm text-emerald-900 bg-emerald-50 px-3 py-1 rounded">View all</Link>
               </div>
-            </article>
-          ))}
-          {activeProducts.length === 0 && (
-            <p className="text-emerald-900">No products found.</p>
-          )}
-        </div>
+
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {grouped[cat].slice(0, 6).map((p) => renderCard(p))}
+              </div>
+            </section>
+          ))
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {activeProducts.map((p) => renderCard(p))}
+            {activeProducts.length === 0 && (
+              <p className="text-emerald-900">No products found.</p>
+            )}
+          </div>
+        )}
       </section>
 
       <Footer />

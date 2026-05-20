@@ -1,5 +1,8 @@
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Autoplay, Pagination, Navigation } from "swiper/modules";
+import banner1 from "../../assets/banner1.png";
+import banner2 from "../../assets/bannerr2.png";
+import heroImage from "../../assets/hero.png";
 
 // Import styles
 import "swiper/css";
@@ -18,53 +21,37 @@ const HeroSlider = () => {
         navigation={true}
         className="h-full"
       >
-        {/* Slide 1 */}
         <SwiperSlide>
           <div className="relative h-full">
-            <img
-              src="/images/front banner.png"
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-black/40 flex items-center px-10">
+            <img src={banner1} className="w-full h-full object-cover" alt="banner 1" />
+            <div className="absolute inset-0 bg-black/30 flex items-center px-10">
               <div className="text-white">
-                <h1 className="text-4xl font-bold mb-2">
-                  LUWIA FINE JEWELLERY
-                </h1>
-                <p>TIMELESS AND UNIQUE</p>
+                <h1 className="text-4xl font-bold mb-2">LUWIA FINE JEWELLERY</h1>
+                <p className="text-lg">TIMELESS AND UNIQUE</p>
               </div>
             </div>
           </div>
         </SwiperSlide>
 
-        {/* Slide 2 */}
         <SwiperSlide>
           <div className="relative h-full">
-            <img
-              src="/images/luwia logo.png"
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-black/40 flex items-center px-10">
+            <img src={banner2} className="w-full h-full object-cover" alt="banner 2" />
+            <div className="absolute inset-0 bg-black/30 flex items-center px-10">
               <div className="text-white">
-                <h1 className="text-4xl font-bold mb-2">
-                  LIVE IN LUXURY
-                </h1>
+                <h1 className="text-4xl font-bold mb-2">LIVE IN LUXURY</h1>
+                <p className="text-lg">Curated for the modern celebration.</p>
               </div>
             </div>
           </div>
         </SwiperSlide>
 
-        {/* Slide 3 */}
         <SwiperSlide>
           <div className="relative h-full">
-            <img
-              src="/images/banner3.png"
-              className="w-full h-full object-cover"
-            />
-            <div className="absolute inset-0 bg-black/40 flex items-center px-10">
+            <img src={heroImage} className="w-full h-full object-cover" alt="hero" />
+            <div className="absolute inset-0 bg-black/30 flex items-center px-10">
               <div className="text-white">
-                <h1 className="text-4xl font-bold mb-2">
-                  HIGH QUALITY ASSURANCE
-                </h1>
+                <h1 className="text-4xl font-bold mb-2">HIGH QUALITY ASSURANCE</h1>
+                <p className="text-lg">Luxury craftsmanship in every piece.</p>
               </div>
             </div>
           </div>

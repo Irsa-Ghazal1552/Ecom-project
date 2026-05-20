@@ -7,7 +7,30 @@ const ProductRow = ({ title }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { products, addToCart, addToWishlist } = useShop();
-  const topItems = useMemo(() => products.slice(0, 8), [products]);
+  const topItems = useMemo(() => {
+    const allProducts = [...products];
+
+    if (title === "Best Products") {
+      return allProducts
+        .sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.soldCount || 0) - (a.soldCount || 0))
+        .slice(0, 8);
+    }
+
+    if (title === "Viral Products") {
+      const bestIds = new Set(
+        allProducts
+          .sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.soldCount || 0) - (a.soldCount || 0))
+          .slice(0, 8)
+          .map((item) => item._id)
+      );
+      return allProducts
+        .sort((a, b) => (b.soldCount || 0) - (a.soldCount || 0) || (b.rating || 0) - (a.rating || 0))
+        .filter((item) => !bestIds.has(item._id))
+        .slice(0, 8);
+    }
+
+    return allProducts.slice(0, 8);
+  }, [products, title]);
 
   return (
     <div className="px-6 py-10 md:px-10">

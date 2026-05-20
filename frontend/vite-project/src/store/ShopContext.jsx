@@ -11,8 +11,7 @@ export const ShopProvider = ({ children }) => {
   const [wishlist, setWishlist] = useState([]);
   const [orders, setOrders] = useState([]);
 
-  const loadProducts = async (search = "") => {
-    const params = search ? { search } : {};
+  const loadProducts = async (params = {}) => {
     const res = await API.get("/products", { params });
     setProducts(res.data);
   };
